@@ -93,4 +93,22 @@ final class FoodRepository {
         try context.save()
         return true
     }
+
+    // Food templates
+    func findFoodTemplate(id: UUID) -> FoodTemplate? {
+        let predicate = #Predicate<FoodTemplate> { template in
+            template.id == id
+        }
+        let descriptor = FetchDescriptor<FoodTemplate>(predicate: predicate)
+        return (try? context.fetch(descriptor))?.first
+    }
+
+    func insertFoodTemplateIfMissing(_ template: FoodTemplate) throws -> Bool {
+        if findFoodTemplate(id: template.id) != nil {
+            return false
+        }
+        context.insert(template)
+        try context.save()
+        return true
+    }
 }

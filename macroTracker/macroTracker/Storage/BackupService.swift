@@ -42,7 +42,7 @@ struct FoodEntryDTO: Codable, Hashable {
     }
 }
 
-struct MealTemplateDTO: Codable, Hashable {
+struct FoodTemplateDTO: Codable, Hashable {
     var id: UUID
     var name: String
     var serving: String?
@@ -52,7 +52,7 @@ struct MealTemplateDTO: Codable, Hashable {
     var carbs: Double
     var lastUsedAt: Date
 
-    init(from template: MealTemplate) {
+    init(from template: FoodTemplate) {
         id = template.id
         name = template.name
         serving = template.serving
@@ -63,8 +63,8 @@ struct MealTemplateDTO: Codable, Hashable {
         lastUsedAt = template.lastUsedAt
     }
 
-    func toModel() -> MealTemplate {
-        MealTemplate(
+    func toModel() -> FoodTemplate {
+        FoodTemplate(
             id: id,
             name: name,
             serving: serving,
@@ -77,10 +77,30 @@ struct MealTemplateDTO: Codable, Hashable {
     }
 }
 
+struct MealItemDTO: Codable, Hashable {
+    var foodID: UUID
+    var quantity: Double
+}
+
+struct MealTemplateDTO: Codable, Hashable {
+    var id: UUID
+    var name: String
+    var lastUsedAt: Date
+    var items: [MealItemDTO]
+
+    init(from template: MealTemplate) {
+        id = template.id
+        name = template.name
+        lastUsedAt = template.lastUsedAt
+        items = template.items.map { MealItemDTO(foodID: $0.food.id, quantity: $0.quantity) }
+    }
+}
+
 struct BackupPayload: Codable {
     var schemaVersion: Int
     var targets: MacroTargets
     var entries: [FoodEntryDTO]
+    var foodTemplates: [FoodTemplateDTO]?
     var mealTemplates: [MealTemplateDTO]?
 }
 
@@ -91,7 +111,7 @@ enum BackupError: Error {
 
 @MainActor
 final class BackupService {
-    static let currentSchemaVersion = 3
+    static let currentSchemaVersion = 4
 
     private let repository: FoodRepository
 
@@ -102,12 +122,14 @@ final class BackupService {
     func exportData() throws -> Data {
         let targets = repository.targets().asValue
         let entries = repository.allEntries().map(FoodEntryDTO.init)
-        let templates = (try? repository.context.fetch(FetchDescriptor<MealTemplate>()))?.map(MealTemplateDTO.init) ?? []
+        let foodTemplates = (try? repository.context.fetch(FetchDescriptor<FoodTemplate>()))?.map(FoodTemplateDTO.init) ?? []
+        let mealTemplates = (try? repository.context.fetch(FetchDescriptor<MealTemplate>()))?.map(MealTemplateDTO.init) ?? []
         let payload = BackupPayload(
             schemaVersion: Self.currentSchemaVersion,
             targets: targets,
             entries: entries,
-            mealTemplates: templates.isEmpty ? nil : templates
+            foodTemplates: foodTemplates.isEmpty ? nil : foodTemplates,
+            mealTemplates: mealTemplates.isEmpty ? nil : mealTemplates
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -152,9 +174,24 @@ final class BackupService {
             }
         }
 
-        if let templates = payload.mealTemplates {
-            for dto in templates {
+        var foodMap: [UUID: FoodTemplate] = [:]
+        if let foodTemplates = payload.foodTemplates {
+            for dto in foodTemplates {
                 let model = dto.toModel()
+                _ = try repository.insertFoodTemplateIfMissing(model)
+                if let saved = repository.findFoodTemplate(id: model.id) {
+                    foodMap[model.id] = saved
+                }
+            }
+        }
+
+        if let mealTemplates = payload.mealTemplates {
+            for dto in mealTemplates {
+                let items = dto.items.compactMap { itemDTO -> MealItem? in
+                    guard let food = foodMap[itemDTO.foodID] else { return nil }
+                    return MealItem(food: food, quantity: itemDTO.quantity)
+                }
+                let model = MealTemplate(id: dto.id, name: dto.name, items: items, lastUsedAt: dto.lastUsedAt)
                 _ = try repository.insertMealTemplateIfMissing(model)
             }
         }

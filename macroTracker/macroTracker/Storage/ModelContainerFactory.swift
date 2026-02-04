@@ -6,6 +6,8 @@ enum ModelContainerFactory {
     static func makeContainer() -> ModelContainer {
         let schema = Schema([
             FoodEntry.self,
+            FoodTemplate.self,
+            MealItem.self,
             MealTemplate.self,
             Targets.self
         ])

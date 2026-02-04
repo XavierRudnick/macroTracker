@@ -5,9 +5,9 @@ struct DailyLogView: View {
     @Environment(\.modelContext) private var context
     @State private var selectedDate = Date()
     @State private var selectedEntry: FoodEntry?
-    @State private var isPresentingAdd = false
     @State private var isPresentingMealPicker = false
     @State private var selectedTemplate: MealTemplate?
+    @State private var selectedFoodTemplate: FoodTemplate?
     @Query(sort: [SortDescriptor(\FoodEntry.timestamp, order: .forward)]) private var allEntries: [FoodEntry]
 
     private var repository: FoodRepository { FoodRepository(context: context) }
@@ -79,26 +79,20 @@ struct DailyLogView: View {
                     } label: {
                         Label("Add Meal", systemImage: "fork.knife")
                     }
-
-                    Button {
-                        isPresentingAdd = true
-                    } label: {
-                        Label("Add Food", systemImage: "plus")
-                    }
                 }
             }
             .tint(WackyPalette.coolBlue)
-            .sheet(isPresented: $isPresentingAdd) {
-                FoodEntryFormView()
-            }
             .sheet(item: $selectedEntry) { entry in
                 FoodEntryFormView(entry: entry)
             }
             .sheet(isPresented: $isPresentingMealPicker) {
-                MealPickerView(selectedTemplate: $selectedTemplate)
+                LogPickerView(selectedMeal: $selectedTemplate, selectedFood: $selectedFoodTemplate)
             }
             .sheet(item: $selectedTemplate) { template in
                 LogMealView(template: template)
+            }
+            .sheet(item: $selectedFoodTemplate) { template in
+                LogFoodView(template: template)
             }
         }
     }
@@ -115,36 +109,66 @@ struct DailyLogView: View {
     }
 }
 
-struct MealPickerView: View {
+struct LogPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var searchText = ""
-    @Query(sort: [SortDescriptor(\MealTemplate.lastUsedAt, order: .reverse)]) private var templates: [MealTemplate]
+    @State private var selection: PickerSelection = .meals
+    @Query(sort: [SortDescriptor(\MealTemplate.lastUsedAt, order: .reverse)]) private var meals: [MealTemplate]
+    @Query(sort: [SortDescriptor(\FoodTemplate.lastUsedAt, order: .reverse)]) private var foods: [FoodTemplate]
 
-    @Binding var selectedTemplate: MealTemplate?
+    @Binding var selectedMeal: MealTemplate?
+    @Binding var selectedFood: FoodTemplate?
 
     var body: some View {
         NavigationStack {
-            let filtered = templates.filter { template in
+            let filteredMeals = meals.filter { template in
+                searchText.isEmpty || template.name.localizedCaseInsensitiveContains(searchText)
+            }
+            let filteredFoods = foods.filter { template in
                 searchText.isEmpty || template.name.localizedCaseInsensitiveContains(searchText)
             }
 
             ZStack {
                 WackyBackground()
-                List(filtered) { template in
-                    Button {
-                        selectedTemplate = template
-                        dismiss()
-                    } label: {
-                        MealRowView(template: template)
+                List {
+                    Section {
+                        Picker("Type", selection: $selection) {
+                            Text("Meals").tag(PickerSelection.meals)
+                            Text("Foods").tag(PickerSelection.foods)
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .buttonStyle(.plain)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+
+                    if selection == .meals {
+                        ForEach(filteredMeals) { template in
+                            Button {
+                                selectedMeal = template
+                                dismiss()
+                            } label: {
+                                MealPickerRow(template: template)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                    } else {
+                        ForEach(filteredFoods) { template in
+                            Button {
+                                selectedFood = template
+                                dismiss()
+                            } label: {
+                                FoodPickerRow(template: template)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+                    }
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
             }
-            .navigationTitle("Pick Meal")
+            .navigationTitle("Add From Saved")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText)
             .toolbar {
@@ -155,6 +179,72 @@ struct MealPickerView: View {
             .tint(WackyPalette.coolBlue)
         }
     }
+}
+
+private enum PickerSelection: String, CaseIterable {
+    case meals
+    case foods
+}
+
+private struct MealPickerRow: View {
+    let template: MealTemplate
+
+    var body: some View {
+        WackyCard {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(template.name)
+                        .font(.wackyTitle(16))
+                        .foregroundStyle(WackyPalette.ink)
+                    Text("\(template.items.count) foods")
+                        .font(.wackyBody(12))
+                        .foregroundStyle(WackyPalette.ink.opacity(0.6))
+                }
+                Spacer()
+                let totals = template.totals
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("\(format(totals.calories)) kcal")
+                        .font(.wackyMono(13))
+                    Text("P \(format(totals.protein))  F \(format(totals.fat))  C \(format(totals.carbs))")
+                        .font(.wackyCaps(11))
+                        .foregroundStyle(WackyPalette.ink.opacity(0.7))
+                }
+            }
+        }
+    }
+}
+
+private struct FoodPickerRow: View {
+    let template: FoodTemplate
+
+    var body: some View {
+        WackyCard {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(template.name)
+                        .font(.wackyTitle(16))
+                        .foregroundStyle(WackyPalette.ink)
+                    if let serving = template.serving, !serving.isEmpty {
+                        Text(serving)
+                            .font(.wackyBody(12))
+                            .foregroundStyle(WackyPalette.ink.opacity(0.6))
+                    }
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("\(format(template.calories)) kcal")
+                        .font(.wackyMono(13))
+                    Text("P \(format(template.protein))  F \(format(template.fat))  C \(format(template.carbs))")
+                        .font(.wackyCaps(11))
+                        .foregroundStyle(WackyPalette.ink.opacity(0.7))
+                }
+            }
+        }
+    }
+}
+
+private func format(_ value: Double) -> String {
+    value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
 }
 
 struct EntryRowView: View {
